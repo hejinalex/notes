@@ -479,7 +479,7 @@ private void subscribe(Object subscriber, SubscriberMethod subscriberMethod) {
 
 首先会根据`subscriber`和`subscriberMethod`来构建一个`Subscription`对象，接着在`subscriptionsByEventType `Map容器中找到有没有对应key的value，然后走找不到等于null的逻辑。对两个容器的添加Value值，`subscriptions`容器添加封装好的`subscription`，`subscribedEvents`容器添加`eventType`。还有一个就是对于黏性事件的处理，黏性事件对应于`postSticky`等sticky系列方法的。
 
-![register](https://raw.githubusercontent.com/hejinalex/notes/master/%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/EventBus%20register.jpg)
+![register](https://raw.githubusercontent.com/hejinalex/notes/master/%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/EventBus%20register.png)
 
 
 
@@ -665,5 +665,56 @@ void invokeSubscriber(Subscription subscription, Object event) {
 }
 ```
 
-![register](https://raw.githubusercontent.com/hejinalex/notes/master/%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/EventBus%20post.jpg)
+![register](https://raw.githubusercontent.com/hejinalex/notes/master/%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/EventBus%20post.png)
+
+
+
+## 注销
+
+```java
+EventBus.getDefault().unregister(this);
+```
+
+跟踪 `unregister()`：
+
+```java
+public synchronized void unregister(Object subscriber) {
+    List<Class<?>> subscribedTypes = typesBySubscriber.get(subscriber);
+    if (subscribedTypes != null) {
+        for (Class<?> eventType : subscribedTypes) {
+            unsubscribeByEventType(subscriber, eventType);
+        }
+        typesBySubscriber.remove(subscriber);
+    } else {
+        logger.log(Level.WARNING, "Subscriber to unregister was not registered before: " + subscriber.getClass());
+    }
+}
+```
+
+注册过程我们就知道 `typesBySubscriber `是保存订阅者的所有订阅事件类型的一个 Map，这里根据订阅者拿到订阅事件类型 List，然后逐个取消订阅，最后 `typesBySubscriber `移除该订阅者,。这里只需要关注它是如果取消订阅的，跟踪 `unsubscribeByEventType()`。
+
+```java
+/** Only updates subscriptionsByEventType, not typesBySubscriber! Caller must update typesBySubscriber. */
+private void unsubscribeByEventType(Object subscriber, Class<?> eventType) {
+    List<Subscription> subscriptions = subscriptionsByEventType.get(eventType);
+    if (subscriptions != null) {
+        int size = subscriptions.size();
+        for (int i = 0; i < size; i++) {
+            Subscription subscription = subscriptions.get(i);
+            if (subscription.subscriber == subscriber) {
+                subscription.active = false;
+                subscriptions.remove(i);
+                i--;
+                size--;
+            }
+        }
+    }
+}
+```
+
+`subscriptionsByEventType `是存储事件类型对应订阅信息的 Map，代码逻辑非常清晰，找出某事件类型的订阅信息 List，遍历订阅信息，将要取消订阅的订阅者和订阅信息封装的订阅者比对，如果是同一个，则说明该订阅信息是将要失效的，于是将该订阅信息移除。
+
+
+
+
 
