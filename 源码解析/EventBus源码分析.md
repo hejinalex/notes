@@ -716,5 +716,7 @@ private void unsubscribeByEventType(Object subscriber, Class<?> eventType) {
 
 
 
+https://juejin.im/post/5b5f120f51882569fd2881a7#heading-12
 
+https://blog.csdn.net/qq_34902522/article/details/85013185
 
