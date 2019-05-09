@@ -91,8 +91,11 @@ EventBus(EventBusBuilder builder) {
 
 ```java
 public void register(Object subscriber) {
+    //1. 通过反射获取到订阅者的Class对象
     Class<?> subscriberClass = subscriber.getClass();
+    //2. 通过Class对象找到对应的订阅者方法集合
     List<SubscriberMethod> subscriberMethods = subscriberMethodFinder.findSubscriberMethods(subscriberClass);
+    //3. 遍历订阅者方法集合，将订阅者和订阅者方法订阅起来。
     synchronized (this) {
         for (SubscriberMethod subscriberMethod : subscriberMethods) {
             subscribe(subscriber, subscriberMethod);
@@ -103,54 +106,147 @@ public void register(Object subscriber) {
 
 `List<SubscriberMethod> subscriberMethods = subscriberMethodFinder.findSubscriberMethods(subscriberClass);`
 
-这是通过`subscriberMethodFinder`对象，来找到加了`@Subscriber`注解，接收事件的方法集合的。
+这是通过`subscriberMethodFinder`对象，来找到加了`@Subscriber`注解，接收事件的方法集合的：
 
 ```java
+//订阅者的 Class 对象为 key，订阅者中的订阅方法 List 为 value
+private static final Map<Class<?>, List<SubscriberMethod>> METHOD_CACHE = new ConcurrentHashMap<>();
+
 List<SubscriberMethod> findSubscriberMethods(Class<?> subscriberClass) {
+    //1. 首先在 METHOD_CACHE 中查找该 Event 对应的订阅者集合是否已经存在，如果有直接返回
     List<SubscriberMethod> subscriberMethods = METHOD_CACHE.get(subscriberClass);
     if (subscriberMethods != null) {
         return subscriberMethods;
     }
-    if (ignoreGeneratedIndex) {
+    //2. 根据订阅者类 subscriberClass 查找相应的订阅方法
+    if (ignoreGeneratedIndex) {//是否忽略生成 index
+        //通过反射获取
         subscriberMethods = findUsingReflection(subscriberClass);
     } else {
+        //通过 SubscriberIndex 方式获取
         subscriberMethods = findUsingInfo(subscriberClass);
     }
+    
+    //若订阅者中没有订阅方法，则抛异常
     if (subscriberMethods.isEmpty()) {
         throw new EventBusException("Subscriber " + subscriberClass
                 + " and its super classes have no public methods with the @Subscribe annotation");
     } else {
+        // 缓存订阅者的订阅方法 List
         METHOD_CACHE.put(subscriberClass, subscriberMethods);
         return subscriberMethods;
     }
 }
+
+//封装了EventBus中的参数，就是一个EventBus订阅方法包装类
+public class SubscriberMethod {
+    final Method method;
+    final ThreadMode threadMode;
+    final Class<?> eventType;
+    final int priority;
+    final boolean sticky;
+    String methodString;
+}
+
 ```
 
-它会先从缓存中读是否有缓存，没有的话接着对`ignoreGeneratedIndex`进行判断，通过默认的方式获取Eventbus，注册订阅者的话，`ignoreGeneratedIndex`的值为false，所以这里调用`findUsingInfo`。
+`METHOD_CACHE `是一个 `ConcurrentHashMap`，以订阅者的 Class 对象为 key，订阅者中的订阅方法 List 为 value，缓存了注册过的订阅方法。如果有缓存则返回返回缓存，如果没有则继续往下执行。
+
+这里看到 `ignoreGeneratedIndex `这个属性，意思为是否忽略生成 index，是在构造 `SubscriberMethodFinder `通过 `EventBusBuilder `的同名属性赋值的，默认为 false，当为 true 时，表示以反射的方式获取订阅者中的订阅方法，当为 false 时，则以 `Subscriber Index` 的方式获取。
+
+`ignoreGeneratedIndex`为true：
+
+```java
+private List<SubscriberMethod> findUsingReflection(Class<?> subscriberClass) {
+    // 创建并初始化 FindState 对象
+    FindState findState = prepareFindState();
+    // findState 与 subscriberClass 关联
+    findState.initForSubscriber(subscriberClass);
+    while (findState.clazz != null) {
+        // 使用反射的方式获取单个类的订阅方法
+        findUsingReflectionInSingleClass(findState);
+        // 使 findState.clazz 指向父类的 Class，继续获取
+        findState.moveToSuperclass();
+    }
+    // 返回订阅者及其父类的订阅方法 List，并释放资源
+    return getMethodsAndRelease(findState);
+}
+```
+
+`ignoreGeneratedIndex`为false
 
 ```java
 private List<SubscriberMethod> findUsingInfo(Class<?> subscriberClass) {
+    //1.通过 prepareFindState 获取到 FindState(保存找到的注解过的方法的状态)
     FindState findState = prepareFindState();
+     //2.findState 与 subscriberClass 关联
     findState.initForSubscriber(subscriberClass);
     while (findState.clazz != null) {
+        //获取订阅者信息
+        //通过 SubscriberIndex 获取 findState.clazz 对应的 SubscriberInfo
         findState.subscriberInfo = getSubscriberInfo(findState);
         if (findState.subscriberInfo != null) {
             SubscriberMethod[] array = findState.subscriberInfo.getSubscriberMethods();
             for (SubscriberMethod subscriberMethod : array) {
                 if (findState.checkAdd(subscriberMethod.method, subscriberMethod.eventType)) {
+                    // 逐个添加进 findState.subscriberMethods
                     findState.subscriberMethods.add(subscriberMethod);
                 }
             }
         } else {
+            // 使用反射的方式获取单个类的订阅方法
             findUsingReflectionInSingleClass(findState);
         }
         findState.moveToSuperclass();
     }
     return getMethodsAndRelease(findState);
 }
+
+// FindState 封装了所有的订阅者和订阅方法的集合。
+static class FindState {
+    //保存所有订阅方法
+    final List<SubscriberMethod> subscriberMethods = new ArrayList<>();
+    //事件类型为Key，订阅方法为Value
+    final Map<Class, Object> anyMethodByEventType = new HashMap<>();
+    //订阅方法为Key，订阅者的Class对象为Value
+    final Map<String, Class> subscriberClassByMethodKey = new HashMap<>();
+    final StringBuilder methodKeyBuilder = new StringBuilder(128);
+
+    Class<?> subscriberClass;
+    Class<?> clazz;
+    boolean skipSuperClasses;
+    SubscriberInfo subscriberInfo;
+    //......
+}
+
 ```
 
-里先通过`prepareFindState()`初始化一个`FindState`，调用`initForSubscriber()`将订阅者的class对象与`findState.clazz`绑定，进入while循环。`getSubscriberInfo()`返回null，不成立，会进入`findUsingReflectionInSingleClass(findState)`方法查找`subscribeMethods`。
+它会先从缓存中读是否有缓存，没有的话接着对`ignoreGeneratedIndex`进行判断，通过默认的方式获取Eventbus，注册订阅者的话，`ignoreGeneratedIndex`的值为false，所以这里调用`findUsingInfo`：
+
+通过 prepareFindState 获取到 FindState 对象，根据 FindState 对象可以进行下一步判断：
+
+```java
+private static final FindState[] FIND_STATE_POOL = new FindState[POOL_SIZE];
+private FindState prepareFindState() {
+    //找到 FIND_STATE_POOL 对象池
+    synchronized (FIND_STATE_POOL) {
+        for (int i = 0; i < POOL_SIZE; i++) {
+            //当找到了对应的FindState
+            FindState state = FIND_STATE_POOL[i];
+            if (state != null) {//FindState 非空表示已经找到
+                FIND_STATE_POOL[i] = null; //清空找到的这个FindState，为了下一次能接着复用这个FIND_STATE_POOL池
+                return state;//返回该 FindState
+            }
+        }
+    }
+    //如果依然没找到，则创建一个新的 FindState
+    return new FindState();
+}
+```
+
+
+
+调用`initForSubscriber()`将订阅者的class对象与`findState.clazz`绑定，进入while循环。`getSubscriberInfo()`返回null，不成立，会进入`findUsingReflectionInSingleClass(findState)`方法查找`subscribeMethods`：
 
 ```java
 private void findUsingReflectionInSingleClass(FindState findState) {
@@ -165,16 +261,23 @@ private void findUsingReflectionInSingleClass(FindState findState) {
     }
     for (Method method : methods) {
         int modifiers = method.getModifiers();
+        //忽略非 public 和 static 的方法
         if ((modifiers & Modifier.PUBLIC) != 0 && (modifiers & MODIFIERS_IGNORE) == 0) {
+            // 获取订阅方法的所有参数
             Class<?>[] parameterTypes = method.getParameterTypes();
+            // 订阅方法只能有一个参数，否则忽略
             if (parameterTypes.length == 1) {
+                // 获取有 Subscribe 的注解
                 Subscribe subscribeAnnotation = method.getAnnotation(Subscribe.class);
                 if (subscribeAnnotation != null) {
+                    // 获取第一个参数
                     Class<?> eventType = parameterTypes[0];
+                    // 检查 eventType 决定是否订阅，通常订阅者不能有多个 eventType 相同的订阅方法
                     if (findState.checkAdd(method, eventType)) {
+                        // 获取线程模式
                         ThreadMode threadMode = subscribeAnnotation.threadMode();
-                        findState.subscriberMethods.add(new SubscriberMethod(method, eventType, threadMode,
-                                subscribeAnnotation.priority(), subscribeAnnotation.sticky()));
+                        // 添加订阅方法进 List
+                        findState.subscriberMethods.add(new SubscriberMethod(method, eventType, threadMode, subscribeAnnotation.priority(), subscribeAnnotation.sticky()));
                     }
                 }
             } else if (strictMethodVerification && method.isAnnotationPresent(Subscribe.class)) {
@@ -205,9 +308,13 @@ if (parameterTypes.length == 1）`
 在成功找到订阅者方法时，还有一个`findState.checkAdd(method, eventType)`方法：
 
 ```java
+//事件类型为Key，订阅方法为Value
+final Map<Class, Object> anyMethodByEventType = new HashMap<>();
+
 boolean checkAdd(Method method, Class<?> eventType) {
             // 2 level check: 1st level with event type only (fast), 2nd level with complete signature when required.
             // Usually a subscriber doesn't have methods listening to the same event type.
+    		//put()方法执行之后，返回的是之前put的值
             Object existing = anyMethodByEventType.put(eventType, method);
             if (existing == null) {
                 return true;
@@ -220,9 +327,13 @@ boolean checkAdd(Method method, Class<?> eventType) {
                     // Put any non-Method object to "consume" the existing Method
                     anyMethodByEventType.put(eventType, this);
                 }
+                //根据方法签名来检查
                 return checkAddWithMethodSignature(method, eventType);
             }
         }
+
+		//订阅方法为Key，订阅者的Class对象为Value
+		final Map<String, Class> subscriberClassByMethodKey = new HashMap<>();
 
         private boolean checkAddWithMethodSignature(Method method, Class<?> eventType) {
             methodKeyBuilder.setLength(0);
@@ -231,11 +342,15 @@ boolean checkAdd(Method method, Class<?> eventType) {
 
             String methodKey = methodKeyBuilder.toString();
             Class<?> methodClass = method.getDeclaringClass();
+            //put方法返回的是put之前的对象
             Class<?> methodClassOld = subscriberClassByMethodKey.put(methodKey, methodClass);
+            //如果methodClassOld不存在或者是methodClassOld的父类的话，则表明是它的父类，直接返回true。否则，就表明在它的子类中也找到了相应的订阅，执行的 put 操作是一个 revert 操作，put 进去的是 methodClassOld，而不是 methodClass
             if (methodClassOld == null || methodClassOld.isAssignableFrom(methodClass)) {
                 // Only add if not already found in a sub class
                 return true;
             } else {
+                //这里是一个revert操作，所以如果找到了它的子类也订阅了该方法，则不允许父类和子类都同时订阅该事件，put 的是之前的那个 methodClassOld，就是将以前的那个 methodClassOld 存入 HashMap 去覆盖相同的订阅者。
+        		//不允许出现一个订阅者有多个相同方法订阅同一个事件
                 // Revert the put, old class is further down the class hierarchy
                 subscriberClassByMethodKey.put(methodKey, methodClassOld);
                 return false;
@@ -285,6 +400,7 @@ public void register(Object subscriber) {
         Class<?> subscriberClass = subscriber.getClass();
         List<SubscriberMethod> subscriberMethods = subscriberMethodFinder.findSubscriberMethods(subscriberClass);
         synchronized (this) {
+            //迭代每个 Subscribe 方法，调用 subscribe() 传入 subscriber(订阅者) 和 subscriberMethod(订阅方法) 完成订阅，
             for (SubscriberMethod subscriberMethod : subscriberMethods) {
                 subscribe(subscriber, subscriberMethod);
             }
@@ -295,20 +411,28 @@ public void register(Object subscriber) {
 通过`subscriberMethodFinder.findSubscriberMethods`方法找到订阅方法集合后，还需要对每个订阅方法进行一个`subscribe`方法操作：
 
 ```java
+private final Map<Class<?>, CopyOnWriteArrayList<Subscription>> subscriptionsByEventType;
+
 // Must be called in synchronized block
 private void subscribe(Object subscriber, SubscriberMethod subscriberMethod) {
     Class<?> eventType = subscriberMethod.eventType;
+    // 创建 Subscription 封装订阅者和订阅方法信息
     Subscription newSubscription = new Subscription(subscriber, subscriberMethod);
+    //可并发读写的ArrayList，key为EventType，value为Subscriptions
+    //根据事件类型从 subscriptionsByEventType 这个 Map 中获取 Subscription 集合
     CopyOnWriteArrayList<Subscription> subscriptions = subscriptionsByEventType.get(eventType);
+    //如果为 null，表示还没有订阅过，创建并 put 进 Map
     if (subscriptions == null) {
         subscriptions = new CopyOnWriteArrayList<>();
         subscriptionsByEventType.put(eventType, subscriptions);
     } else {
+        //若subscriptions中已经包含newSubscription，表示该newSubscription已经被订阅过，抛出异常
         if (subscriptions.contains(newSubscription)) {
             throw new EventBusException("Subscriber " + subscriber.getClass() + " already registered to event "
                     + eventType);
         }
     }
+    // 按照优先级插入subscriptions
     int size = subscriptions.size();
     for (int i = 0; i <= size; i++) {
         if (i == size || subscriberMethod.priority > subscriptions.get(i).subscriberMethod.priority) {
@@ -316,23 +440,32 @@ private void subscribe(Object subscriber, SubscriberMethod subscriberMethod) {
             break;
         }
     }
+    //key为订阅者，value为eventType，用来存放订阅者中的事件类型
+    //private final Map<Object, List<Class<?>>> typesBySubscriber;
     List<Class<?>> subscribedEvents = typesBySubscriber.get(subscriber);
     if (subscribedEvents == null) {
         subscribedEvents = new ArrayList<>();
         typesBySubscriber.put(subscriber, subscribedEvents);
     }
+    //将EventType放入subscribedEvents的集合中
     subscribedEvents.add(eventType);
+    //判断是否为Sticky事件
     if (subscriberMethod.sticky) {
+        //判断是否设置了事件继承
         if (eventInheritance) {
             // Existing sticky events of all subclasses of eventType have to be considered.
             // Note: Iterating over all events may be inefficient with lots of sticky events,
             // thus data structure should be changed to allow a more efficient lookup
             // (e.g. an additional map storing sub classes of super classes: Class -> List<Class>).
+            //获取到所有Sticky事件的Set集合
             Set<Map.Entry<Class<?>, Object>> entries = stickyEvents.entrySet();
+            //遍历所有Sticky事件
             for (Map.Entry<Class<?>, Object> entry : entries) {
                 Class<?> candidateEventType = entry.getKey();
+                //判断当前事件类型是否为黏性事件或者其子类
                 if (eventType.isAssignableFrom(candidateEventType)) {
                     Object stickyEvent = entry.getValue();
+                    // 执行设置了 sticky 模式的订阅方法
                     checkPostStickyEventToSubscription(newSubscription, stickyEvent);
                 }
             }
@@ -345,5 +478,128 @@ private void subscribe(Object subscriber, SubscriberMethod subscriberMethod) {
 ```
 
 首先会根据`subscriber`和`subscriberMethod`来构建一个`Subscription`对象，接着在`subscriptionsByEventType `Map容器中找到有没有对应key的value，然后走找不到等于null的逻辑。对两个容器的添加Value值，`subscriptions`容器添加封装好的`subscription`，`subscribedEvents`容器添加`eventType`。还有一个就是对于黏性事件的处理，黏性事件对应于`postSticky`等sticky系列方法的。
+
+![register](https://raw.githubusercontent.com/hejinalex/notes/master/%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/EventBus%20register.jpg)
+
+
+
+## POST
+
+```java
+private final ThreadLocal<PostingThreadState> currentPostingThreadState = new ThreadLocal<PostingThreadState>() {
+        @Override
+        protected PostingThreadState initialValue() {
+            return new PostingThreadState();
+        }
+    };
+
+/** Posts the given event to the event bus. */
+public void post(Object event) {
+    PostingThreadState postingState = currentPostingThreadState.get();
+    List<Object> eventQueue = postingState.eventQueue;
+    eventQueue.add(event);
+    if (!postingState.isPosting) {
+        postingState.isMainThread = isMainThread();
+        postingState.isPosting = true;
+        if (postingState.canceled) {
+            throw new EventBusException("Internal error. Abort state was not reset");
+        }
+        try {
+            while (!eventQueue.isEmpty()) {
+                postSingleEvent(eventQueue.remove(0), postingState);
+            }
+        } finally {
+            postingState.isPosting = false;
+            postingState.isMainThread = false;
+        }
+    }
+}
+```
+
+通过`ThreadLocal`来获得一个线程专属的`PostingThreadState`对象，然后把事件（Event）添加到队列中。对postingState的一些变量进行赋值操作。走进while循环，判断队列是否为空，不为空走`postSingleEvent`方法。
+
+```java
+private void postSingleEvent(Object event, PostingThreadState postingState) throws Error {
+    Class<?> eventClass = event.getClass();
+    boolean subscriptionFound = false;
+    if (eventInheritance) {
+        List<Class<?>> eventTypes = lookupAllEventTypes(eventClass);
+        int countTypes = eventTypes.size();
+        for (int h = 0; h < countTypes; h++) {
+            Class<?> clazz = eventTypes.get(h);
+            subscriptionFound |= postSingleEventForEventType(event, postingState, clazz);
+        }
+    } else {
+        subscriptionFound = postSingleEventForEventType(event, postingState, eventClass);
+    }
+    if (!subscriptionFound) {
+        if (logNoSubscriberMessages) {
+            logger.log(Level.FINE, "No subscribers registered for event " + eventClass);
+        }
+        if (sendNoSubscriberEvent && eventClass != NoSubscriberEvent.class &&
+                eventClass != SubscriberExceptionEvent.class) {
+            post(new NoSubscriberEvent(this, event));
+        }
+    }
+}
+```
+
+`evenInheritance`默认为true，表示向上查找事件的父类，也包含接口。
+
+在构建EventBus时可以设置为false，对于简单的事件类型，可以提升效率。官方建议使用默认。
+
+找到事件的所有事件类型。
+
+```java
+/** Looks up all Class objects including super classes and interfaces. Should also work for interfaces. */
+private static List<Class<?>> lookupAllEventTypes(Class<?> eventClass) {
+    synchronized (eventTypesCache) {
+        List<Class<?>> eventTypes = eventTypesCache.get(eventClass);
+        if (eventTypes == null) {
+            eventTypes = new ArrayList<>();
+            Class<?> clazz = eventClass;
+            while (clazz != null) {
+                eventTypes.add(clazz);
+                addInterfaces(eventTypes, clazz.getInterfaces());
+                clazz = clazz.getSuperclass();
+            }
+            eventTypesCache.put(eventClass, eventTypes);
+        }
+        return eventTypes;
+    }
+}
+```
+
+调用`postSingleEventForEventType`方法。`subscribe`方法中当时就是添加了`subscription`进入`subscriptionsByEventType`容器中，在这里使用了。
+
+```java
+private boolean postSingleEventForEventType(Object event, PostingThreadState postingState, Class<?> eventClass) {
+    CopyOnWriteArrayList<Subscription> subscriptions;
+    synchronized (this) {
+        subscriptions = subscriptionsByEventType.get(eventClass);
+    }
+    if (subscriptions != null && !subscriptions.isEmpty()) {
+        for (Subscription subscription : subscriptions) {
+            postingState.event = event;
+            postingState.subscription = subscription;
+            boolean aborted = false;
+            try {
+                postToSubscription(subscription, event, postingState.isMainThread);
+                aborted = postingState.canceled;
+            } finally {
+                postingState.event = null;
+                postingState.subscription = null;
+                postingState.canceled = false;
+            }
+            if (aborted) {
+                break;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+```
+
 
 
