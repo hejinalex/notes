@@ -112,7 +112,7 @@ if(stickyEvent != null) {
 }
 ```
 
-`removeStickyEvent`是一个被重载的方法，传入事件类时，它将返回先前持有的粘性事件。使用这个重载方法，我们可以改进前面的示例：
+`removeStickyEvent`有重载方法，传入事件类时，它将返回先前持有的粘性事件。使用这个重载方法，我们可以改进前面的示例：
 ```java
 MessageEvent stickyEvent = EventBus.getDefault().removeStickyEvent(MessageEvent.class);
 // Better check that an event was actually posted before
