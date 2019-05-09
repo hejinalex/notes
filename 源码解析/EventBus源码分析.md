@@ -486,6 +486,7 @@ private void subscribe(Object subscriber, SubscriberMethod subscriberMethod) {
 ## POST
 
 ```java
+//currentPostingThreadState 线程独有的
 private final ThreadLocal<PostingThreadState> currentPostingThreadState = new ThreadLocal<PostingThreadState>() {
         @Override
         protected PostingThreadState initialValue() {
@@ -495,38 +496,58 @@ private final ThreadLocal<PostingThreadState> currentPostingThreadState = new Th
 
 /** Posts the given event to the event bus. */
 public void post(Object event) {
+    //获取当前线程的 posting 状态
     PostingThreadState postingState = currentPostingThreadState.get();
+    //获取当前事件队列
     List<Object> eventQueue = postingState.eventQueue;
+    //将事件添加进当前线程的事件队列
     eventQueue.add(event);
+    //判断是否正在posting
     if (!postingState.isPosting) {
         postingState.isMainThread = isMainThread();
         postingState.isPosting = true;
+        //如果已经取消，则抛出异常
         if (postingState.canceled) {
             throw new EventBusException("Internal error. Abort state was not reset");
         }
         try {
+            //发送事件
             while (!eventQueue.isEmpty()) {
                 postSingleEvent(eventQueue.remove(0), postingState);
             }
         } finally {
+            //状态复原
             postingState.isPosting = false;
             postingState.isMainThread = false;
         }
     }
 }
+
+//发送事件的线程封装类
+final static class PostingThreadState {
+    final List<Object> eventQueue = new ArrayList<>();//事件队列
+    boolean isPosting;//是否正在 posting
+    boolean isMainThread;//是否为主线程
+    Subscription subscription;
+    Object event;
+    boolean canceled;//是否已经取消
+}
+
 ```
 
-通过`ThreadLocal`来获得一个线程专属的`PostingThreadState`对象，然后把事件（Event）添加到队列中。对postingState的一些变量进行赋值操作。走进while循环，判断队列是否为空，不为空走`postSingleEvent`方法。
+EventBus 用 `ThreadLocal `存储每个线程的 `PostingThreadState`，一个存储了事件发布状态的类，当 post 一个事件时，添加到事件队列末尾，等待前面的事件发布完毕后再拿出来发布，这里看事件发布的关键代码`postSingleEvent()`。
 
 ```java
 private void postSingleEvent(Object event, PostingThreadState postingState) throws Error {
     Class<?> eventClass = event.getClass();
     boolean subscriptionFound = false;
     if (eventInheritance) {
+        //查找到所有继承关系的事件类型，将该类的父类全部放入集合中
         List<Class<?>> eventTypes = lookupAllEventTypes(eventClass);
         int countTypes = eventTypes.size();
         for (int h = 0; h < countTypes; h++) {
             Class<?> clazz = eventTypes.get(h);
+            //判断是否找到订阅者订阅了该事件
             subscriptionFound |= postSingleEventForEventType(event, postingState, clazz);
         }
     } else {
@@ -538,43 +559,21 @@ private void postSingleEvent(Object event, PostingThreadState postingState) thro
         }
         if (sendNoSubscriberEvent && eventClass != NoSubscriberEvent.class &&
                 eventClass != SubscriberExceptionEvent.class) {
+            //发送没有订阅者订阅该事件
             post(new NoSubscriberEvent(this, event));
         }
     }
 }
 ```
 
-`evenInheritance`默认为true，表示向上查找事件的父类，也包含接口。
+首先看 `eventInheritance `这个属性，是否开启事件继承，若是，找出发布事件的所有父类，也就是 `lookupAllEventTypes()`，然后遍历每个事件类型进行发布。若不是，则直接发布该事件。
 
-在构建EventBus时可以设置为false，对于简单的事件类型，可以提升效率。官方建议使用默认。
-
-找到事件的所有事件类型。
-
-```java
-/** Looks up all Class objects including super classes and interfaces. Should also work for interfaces. */
-private static List<Class<?>> lookupAllEventTypes(Class<?> eventClass) {
-    synchronized (eventTypesCache) {
-        List<Class<?>> eventTypes = eventTypesCache.get(eventClass);
-        if (eventTypes == null) {
-            eventTypes = new ArrayList<>();
-            Class<?> clazz = eventClass;
-            while (clazz != null) {
-                eventTypes.add(clazz);
-                addInterfaces(eventTypes, clazz.getInterfaces());
-                clazz = clazz.getSuperclass();
-            }
-            eventTypesCache.put(eventClass, eventTypes);
-        }
-        return eventTypes;
-    }
-}
-```
-
-调用`postSingleEventForEventType`方法。`subscribe`方法中当时就是添加了`subscription`进入`subscriptionsByEventType`容器中，在这里使用了。
+如果需要发布的事件没有找到任何匹配的订阅信息，则发布一个 `NoSubscriberEvent `事件。这里只看发布事件的关键代码 `postSingleEventForEventType()`：
 
 ```java
 private boolean postSingleEventForEventType(Object event, PostingThreadState postingState, Class<?> eventClass) {
     CopyOnWriteArrayList<Subscription> subscriptions;
+    //获取到 Subscription 的集合
     synchronized (this) {
         subscriptions = subscriptionsByEventType.get(eventClass);
     }
@@ -584,6 +583,7 @@ private boolean postSingleEventForEventType(Object event, PostingThreadState pos
             postingState.subscription = subscription;
             boolean aborted = false;
             try {
+                //调用 postToSubscription 发送
                 postToSubscription(subscription, event, postingState.isMainThread);
                 aborted = postingState.canceled;
             } finally {
@@ -601,5 +601,69 @@ private boolean postSingleEventForEventType(Object event, PostingThreadState pos
 }
 ```
 
+来到这里，开始根据事件类型匹配出订阅信息，如果该事件有订阅信息，则执行 `postToSubscription()`，发布事件到每个订阅者，返回 true，若没有，则返回 false。继续追踪发布事件到具体订阅者的代码 `postToSubscription()`：
 
+```java
+private void postToSubscription(Subscription subscription, Object event, boolean isMainThread) {
+    switch (subscription.subscriberMethod.threadMode) {
+        //订阅线程跟随发布线程，EventBus 默认的订阅方式
+        case POSTING:
+            // 订阅线程和发布线程相同，直接订阅
+            invokeSubscriber(subscription, event);
+            break;
+        // 订阅线程为主线程
+        case MAIN:
+            //如果在 UI 线程，直接调用 invokeSubscriber
+            if (isMainThread) {
+                invokeSubscriber(subscription, event);
+            } else {
+     //如果不在 UI 线程，用 mainThreadPoster 进行调度，即上文讲述的 HandlerPoster 的 Handler 异步处理，将订阅线程切换到主线程订阅
+                mainThreadPoster.enqueue(subscription, event);
+            }
+            break;
+        // 订阅线程为主线程
+        case MAIN_ORDERED:
+            if (mainThreadPoster != null) {
+                mainThreadPoster.enqueue(subscription, event);
+            } else {
+                // temporary: technically not correct as poster not decoupled from subscriber
+                invokeSubscriber(subscription, event);
+            }
+            break;
+        // 订阅线程为后台线程
+        case BACKGROUND:
+            //如果在 UI 线程，则将 subscription 添加到后台线程的线程池
+            if (isMainThread) {
+                backgroundPoster.enqueue(subscription, event);
+            } else {
+            //不在UI线程，直接分发
+                invokeSubscriber(subscription, event);
+            }
+            break;
+        // 订阅线程为异步线程
+        case ASYNC:
+            // 使用线程池线程订阅
+            asyncPoster.enqueue(subscription, event);
+            break;
+        default:
+            throw new IllegalStateException("Unknown thread mode: " + subscription.subscriberMethod.threadMode);
+    }
+}
+```
+
+订阅者五种线程模式的特点对应的就是以上代码，简单来讲就是订阅者指定了在哪个线程订阅事件，无论发布者在哪个线程，它都会将事件发布到订阅者指定的线程。这里我们继续看实现订阅者的方法：
+
+```java
+void invokeSubscriber(Subscription subscription, Object event) {
+    try {
+        subscription.subscriberMethod.method.invoke(subscription.subscriber, event);
+    } catch (InvocationTargetException e) {
+        handleSubscriberException(subscription, event, e.getCause());
+    } catch (IllegalAccessException e) {
+        throw new IllegalStateException("Unexpected exception", e);
+    }
+}
+```
+
+![register](https://raw.githubusercontent.com/hejinalex/notes/master/%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/EventBus%20post.jpg)
 
