@@ -617,7 +617,7 @@ private void postToSubscription(Subscription subscription, Object event, boolean
             if (isMainThread) {
                 invokeSubscriber(subscription, event);
             } else {
-     //如果不在 UI 线程，用 mainThreadPoster 进行调度，即上文讲述的 HandlerPoster 的 Handler 异步处理，将订阅线程切换到主线程订阅
+     			//如果不在 UI 线程，用 mainThreadPoster 进行调度，将订阅线程切换到主线程订阅
                 mainThreadPoster.enqueue(subscription, event);
             }
             break;
@@ -661,6 +661,236 @@ void invokeSubscriber(Subscription subscription, Object event) {
         handleSubscriberException(subscription, event, e.getCause());
     } catch (IllegalAccessException e) {
         throw new IllegalStateException("Unexpected exception", e);
+    }
+}
+```
+
+`mainThreadPoster`：`mainThreadPoster = mainThreadSupport != null ? mainThreadSupport.createPoster(this) : null;`
+
+`mainThreadSupport.createPoster(this)` 返回的是`HandlerPoster(eventBus, looper, 10)`，looper 是一个 `MainThread MainThread `的 Looper。
+
+`HandlerPoster `其实就是 `Handler `的实现，内部维护了一个 `PendingPostQueue `的消息队列，在 `enqueue(Subscription subscription, Object event)` 方法中不断从 `pendingPostPool `的 `ArrayList `缓存池中获取 `PendingPost `添加到 `PendingPostQueue `队列中，并将该 `PendingPost `事件发送到 `Handler `中处理。
+
+在 `handleMessage `中，通过一个 while 死循环，不断从 `PendingPostQueue `中取出 `PendingPost `出来执行，获取到 post 之后由 eventBus 通过该 post 查找相应的 `Subscriber `处理事件。
+
+**while 退出的条件有两个**
+
+1. 获取到的 PendingPost 为 null，即是 PendingPostQueue 已经没有消息可处理。
+2. 每个 PendingPost 在 Handler 中执行的时间超过了最大的执行时间。
+
+```java
+public class HandlerPoster extends Handler implements Poster {
+
+    private final PendingPostQueue queue;//存放待执行的 Post Events 的事件队列
+    private final int maxMillisInsideHandleMessage;//Post 事件在 handleMessage 中执行的最大的时间值，超过这个时间值则会抛异常
+    private final EventBus eventBus;
+    private boolean handlerActive;//标识 Handler 是否被运行起来
+
+   protected HandlerPoster(EventBus eventBus, Looper looper, int maxMillisInsideHandleMessage) {
+        super(looper);
+        this.eventBus = eventBus;
+        this.maxMillisInsideHandleMessage = maxMillisInsideHandleMessage;
+        queue = new PendingPostQueue();
+    }
+
+    public void enqueue(Subscription subscription, Object event) {
+        //从 pendingPostPool 的 ArrayList 缓存池中获取 PendingPost 添加到 PendingPostQueue 队列中，并将该 PendingPost 事件发送到 Handler 中处理。
+        PendingPost pendingPost = PendingPost.obtainPendingPost(subscription, event);
+        synchronized (this) {
+            queue.enqueue(pendingPost);//添加到队列中
+            if (!handlerActive) {//标记 Handler 为活跃状态
+                handlerActive = true;
+                if (!sendMessage(obtainMessage())) {
+                    throw new EventBusException("Could not send handler message");
+                }
+            }
+        }
+    }
+
+    @Override
+    public void handleMessage(Message msg) {
+        boolean rescheduled = false;
+        try {
+            long started = SystemClock.uptimeMillis();
+            while (true) {//死循环，不断从 PendingPost 队列中取出 post 事件执行
+                PendingPost pendingPost = queue.poll();
+                if (pendingPost == null) {//如果为 null，表示队列中没有 post 事件，此时标记 Handelr 关闭，并退出 while 循环
+                    synchronized (this) {
+                        // Check again, this time in synchronized
+                        pendingPost = queue.poll();
+                        if (pendingPost == null) {
+                            handlerActive = false; //标记 Handler 为非活跃状态
+                            return;
+                        }
+                    }
+                }
+                //获取到 post 之后由 eventBus 通过该 post 查找相应的 Subscriber 处理事件
+                eventBus.invokeSubscriber(pendingPost);
+                //计算每个事件在 handleMessage 中执行的时间
+                long timeInMethod = SystemClock.uptimeMillis() - started;
+                if (timeInMethod >= maxMillisInsideHandleMessage) {
+                    if (!sendMessage(obtainMessage())) {
+                        throw new EventBusException("Could not send handler message");
+                    }
+                    rescheduled = true;
+                    return;
+                }
+            }
+        } finally {
+            handlerActive = rescheduled;
+        }
+    }
+}
+
+final class PendingPost {
+    //通过ArrayList来实现PendingPost的添加和删除
+    private final static List<PendingPost> pendingPostPool = new ArrayList<PendingPost>();
+
+    Object event;
+    Subscription subscription;
+    PendingPost next;
+
+    private PendingPost(Object event, Subscription subscription) {
+        this.event = event;
+        this.subscription = subscription;
+    }
+
+    //获取 PendingPost
+    static PendingPost obtainPendingPost(Subscription subscription, Object event) {
+        synchronized (pendingPostPool) {
+            int size = pendingPostPool.size();
+            if (size > 0) {
+                PendingPost pendingPost = pendingPostPool.remove(size - 1);
+                pendingPost.event = event;
+                pendingPost.subscription = subscription;
+                pendingPost.next = null;
+                return pendingPost;
+            }
+        }
+        return new PendingPost(event, subscription);
+    }
+
+    //释放 PendingPost
+    static void releasePendingPost(PendingPost pendingPost) {
+        pendingPost.event = null;
+        pendingPost.subscription = null;
+        pendingPost.next = null;
+        synchronized (pendingPostPool) {
+            // Don't let the pool grow indefinitely
+            if (pendingPostPool.size() < 10000) {
+                pendingPostPool.add(pendingPost);
+            }
+        }
+    }
+
+}
+```
+
+`eventBus.invokeSubscriber(pendingPost)`：
+
+最终执行的还是上面的`invokeSubscriber(subscription, event);`
+
+```java
+void invokeSubscriber(PendingPost pendingPost) {
+    Object event = pendingPost.event;
+    Subscription subscription = pendingPost.subscription;
+    PendingPost.releasePendingPost(pendingPost);
+    if (subscription.active) {
+        invokeSubscriber(subscription, event);
+    }
+}
+```
+
+`backgroundPoster # BackGroundPoster`：
+
+`BackgroundPoster `实现了 `Runnable `和 Poster，`enqueue()` 和 `HandlerPoster `中实现一样，在上文中已经讲过，这里不再赘述。
+
+我们来看下 run() 方法中的实现，不断从 `PendingPostQueue `中取出 `pendingPost `到 EventBus 中分发，这里注意外部是 while() 死循环，意味着 `PendingPostQueue `中**所有**的 `pendingPost `都将分发出去。而 AsyncPoster 只是取出一个。
+
+```java
+final class BackgroundPoster implements Runnable, Poster {
+
+    private final PendingPostQueue queue;
+    private final EventBus eventBus;
+
+    private volatile boolean executorRunning;
+
+    BackgroundPoster(EventBus eventBus) {
+        this.eventBus = eventBus;
+        queue = new PendingPostQueue();
+    }
+
+    public void enqueue(Subscription subscription, Object event) {
+        PendingPost pendingPost = PendingPost.obtainPendingPost(subscription, event);
+        synchronized (this) {
+            queue.enqueue(pendingPost);//添加到队列中
+            if (!executorRunning) {
+                executorRunning = true;
+                //在线程池中执行这个 pendingPost
+                eventBus.getExecutorService().execute(this);//Executors.newCachedThreadPool()
+            }
+        }
+    }
+
+    @Override
+    public void run() {
+        try {
+            try {
+                //不断循环从 PendingPostQueue 取出 pendingPost 到 eventBus 执行
+                while (true) {
+                    //在 1000 毫秒内从 PendingPostQueue 中获取 pendingPost
+                    PendingPost pendingPost = queue.poll(1000);
+                    //双重校验锁判断 pendingPost 是否为 null
+                    if (pendingPost == null) {
+                        synchronized (this) {
+                            // Check again, this time in synchronized
+                            pendingPost = queue.poll();//再次尝试获取 pendingPost
+                            if (pendingPost == null) {
+                                executorRunning = false;
+                                return;
+                            }
+                        }
+                    }
+                    //将 pendingPost 通过 EventBus 分发出去
+                   //这里会将PendingPostQueue中【所有】的pendingPost都会分发，这里区别于AsyncPoster
+                    eventBus.invokeSubscriber(pendingPost);
+                }
+            } catch (InterruptedException e) {
+                eventBus.getLogger().log(Level.WARNING, Thread.currentThread().getName() + " was interruppted", e);
+            }
+        } finally {
+            executorRunning = false;
+        }
+    }
+}
+```
+
+`asyncPoster # AsyncPoster`：
+
+```java
+class AsyncPoster implements Runnable, Poster {
+
+    private final PendingPostQueue queue;
+    private final EventBus eventBus;
+
+    AsyncPoster(EventBus eventBus) {
+        this.eventBus = eventBus;
+        queue = new PendingPostQueue();
+    }
+
+    public void enqueue(Subscription subscription, Object event) {
+        PendingPost pendingPost = PendingPost.obtainPendingPost(subscription, event);
+        queue.enqueue(pendingPost);
+        eventBus.getExecutorService().execute(this);//Executors.newCachedThreadPool()
+    }
+
+    @Override
+    public void run() {
+        PendingPost pendingPost = queue.poll();
+        if(pendingPost == null) {
+            throw new IllegalStateException("No pending post available");
+        }
+        eventBus.invokeSubscriber(pendingPost);
     }
 }
 ```
@@ -714,9 +944,8 @@ private void unsubscribeByEventType(Object subscriber, Class<?> eventType) {
 
 `subscriptionsByEventType `是存储事件类型对应订阅信息的 Map，代码逻辑非常清晰，找出某事件类型的订阅信息 List，遍历订阅信息，将要取消订阅的订阅者和订阅信息封装的订阅者比对，如果是同一个，则说明该订阅信息是将要失效的，于是将该订阅信息移除。
 
+参考：
 
-
-https://juejin.im/post/5b5f120f51882569fd2881a7#heading-12
-
-https://blog.csdn.net/qq_34902522/article/details/85013185
-
+> [Android EventBus源码分析，基于最新3.1.1版本,看这一篇就够了！！](<https://blog.csdn.net/qq_34902522/article/details/85013185>)
+>
+> [EventBus 3.0+ 源码详解（史上最详细图文讲解）](<https://blog.csdn.net/WBST5/article/details/81089710>)
