@@ -31,9 +31,9 @@ public static EventBus getDefault() {
 
 private static final EventBusBuilder DEFAULT_BUILDER = new EventBusBuilder();
 /**
-  * Creates a new EventBus instance; each instance is a separate scope in which events are 	         * delivered. To use a
-  * central bus, consider {@link #getDefault()}.
-  */
+ * Creates a new EventBus instance; each instance is a separate scope in which events are delivered. To use a
+ * central bus, consider {@link #getDefault()}.
+ */
 public EventBus() {
     this(DEFAULT_BUILDER);
 }
