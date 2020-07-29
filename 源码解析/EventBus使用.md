@@ -16,9 +16,9 @@ public class MessageEvent {
 
   订阅者方法将在事件发送时调用，这些方法使用 **@Subscribe**注解进行修饰
 
-  * 该方法有且只有一个参数。
-  * 该方法必须是public修饰符修饰，不能用static关键字修饰，不能是抽象的（abstract）
-  * 该方法需要用@Subscribe注解进行修饰。
+  - 该方法有且只有一个参数。
+  - 该方法必须是public修饰符修饰，不能用static关键字修饰，不能是抽象的（abstract）
+  - 该方法需要用@Subscribe注解进行修饰。
 
 ```java
 // This method will be called when a MessageEvent is posted (in the UI thread for Toast)
@@ -67,11 +67,11 @@ public enum ThreadMode {
 }
 ```
 ThreadMode 是 enum（枚举）类型，threadMode 默认值是 POSTING。
-* POSTING：事件发送在什么线程，就在什么线程订阅。故它不需要切换线程来分发事件，因此开销最小。
-* MAIN：如在主线程发送事件，则直接在主线程处理事件；如果在子线程发送事件，则先将事件入队列，然后通过 Handler 切换到主线程，依次处理事件。
-* MAIN_ORDERED：无论在那个线程发送事件，都先将事件入队列，然后通过 Handler 切换到主线程，依次处理事件。
-* BACKGROUND：如果发送事件的线程不是主线程，则在该线程处理，如果是主线程，则使用一个单独的后台线程处理。
-* ASYNC：无论在那个线程发送事件，都将事件入队列，然后通过线程池处理。
+- POSTING：事件发送在什么线程，就在什么线程订阅。故它不需要切换线程来分发事件，因此开销最小。
+- MAIN：如在主线程发送事件，则直接在主线程处理事件；如果在子线程发送事件，则先将事件入队列，然后通过 Handler 切换到主线程，依次处理事件。
+- MAIN_ORDERED：无论在那个线程发送事件，都先将事件入队列，然后通过 Handler 切换到主线程，依次处理事件。
+- BACKGROUND：如果发送事件的线程不是主线程，则在该线程处理，如果是主线程，则使用一个单独的后台线程处理。
+- ASYNC：无论在那个线程发送事件，都将事件入队列，然后通过线程池处理。
 
 ## sticky 粘性事件
 
