@@ -21,6 +21,8 @@ LinkedList 顾名思义是 Java 提供的双向链表，所以它不需要像上
 
 狭义的集合框架
 
+![狭义的集合框架](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E5%9F%BA%E7%A1%80/%E7%8B%AD%E4%B9%89%E7%9A%84Java%E9%9B%86%E5%90%88%E6%A1%86%E6%9E%B6.png)
+
 - List，也就是我们前面介绍最多的有序集合，它提供了方便的访问、插入、删除等操作。
 - Set，Set 是不允许重复元素的，这是和 List 最明显的区别，也就是不存在两个对象 equals 返回 true。我们在日常开发中有很多需要保证元素唯一性的场合。
 - Queue/Deque，则是 Java 提供的标准队列结构的实现，除了集合的基本功能，它还支持类似先入先出（FIFO， First-in-First-Out）或者后入先出（LIFO，Last-In-First-Out）等特定行为。这里不包括 BlockingQueue，因为通常是并发编程场合，所以被放置在并发包里。
