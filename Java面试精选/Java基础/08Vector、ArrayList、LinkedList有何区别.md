@@ -19,7 +19,7 @@ LinkedList 顾名思义是 Java 提供的双向链表，所以它不需要像上
 
 #### 知识扩展
 
-狭义的集合框架
+__狭义的集合框架__
 
 ![狭义的集合框架](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E5%9F%BA%E7%A1%80/%E7%8B%AD%E4%B9%89%E7%9A%84Java%E9%9B%86%E5%90%88%E6%A1%86%E6%9E%B6.png)
 
@@ -34,7 +34,7 @@ Set的基本特征和典型使用场景
 - LinkedHashSet，内部构建了一个记录插入顺序的双向链表，因此提供了按照插入顺序遍历的能力，与此同时，也保证了常数时间的添加、删除、包含等操作，这些操作性能略低于 HashSet，因为需要维护链表的开销。
 - 在遍历元素时，HashSet 性能受自身容量影响，所以初始化时，除非有必要，不然不要将其背后的 HashMap 容量设置过大。而对于 LinkedHashSet，由于其内部链表提供的方便，遍历性能只和元素多少有关系。
 
-
+__并发__
 
 这些集合类，都不是线程安全的，对于 java.util.concurrent 里面的线程安全容器，我在专栏后面会去介绍。但是，并不代表这些集合完全不能支持并发编程的场景，在 Collections 工具类中，提供了一系列的 synchronized 方法，比如
 
@@ -50,7 +50,7 @@ List list = Collections.synchronizedList(new ArrayList());
 
 它的实现，基本就是将每个基本方法，比如 get、set、add 之类，都通过 synchronized 添加基本的同步支持，非常简单粗暴，但也非常实用。注意这些方法创建的线程安全集合，都符合迭代时 fail-fast 行为，当发生意外的并发修改时，尽早抛出 ConcurrentModificationException 异常，以避免不可预计的行为。
 
-
+__排序__
 
 Java 提供的默认排序算法，具体是什么排序方式以及设计思路等。
 
