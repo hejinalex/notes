@@ -36,3 +36,111 @@ java.io，至少需要理解：
 - 而 Reader/Writer 则是用于操作字符，增加了字符编解码等功能，适用于类似从文件中读取或者写入文本信息。本质上计算机操作的都是字节，不管是网络通信还是文件读取，Reader/Writer 相当于构建了应用逻辑和原始数据之间的桥梁。
 - BufferedOutputStream 等带缓冲区的实现，可以避免频繁的磁盘读写，进而提高 IO 处理效率。这种设计利用了缓冲区，将批量数据进行一次操作，但在使用中千万别忘了 flush。
 - 参考下面这张类图，很多 IO 工具类都实现了 Closeable 接口，因为需要进行资源的释放。比如，打开 FileInputStream，它就会获取相应的文件描述符（FileDescriptor），需要利用 try-with-resources、 try-finally 等机制保证 FileInputStream 被明确关闭，进而相应文件描述符也会失效，否则将导致资源无法被释放。利用专栏前面的内容提到的 Cleaner 或 finalize 机制作为资源释放的最后把关，也是必要的。
+
+![Java IO 简化版类图](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E5%9F%BA%E7%A1%80/Java%20IO%E7%AE%80%E5%8C%96%E7%89%88%E7%B1%BB%E5%9B%BE.png)
+
+##### Java NIO 概览
+
+NIO 的主要组成部分：
+
+- Buffer，高效的数据容器，除了布尔类型，所有原始数据类型都有相应的 Buffer 实现。
+
+- Channel，类似在 Linux 之类操作系统上看到的文件描述符，是 NIO 中被用来支持批量式 IO 操作的一种抽象。
+
+  File 或者 Socket，通常被认为是比较高层次的抽象，而 Channel 则是更加操作系统底层的一种抽象，这也使得 NIO 得以充分利用现代操作系统底层机制，获得特定场景的性能优化，例如，DMA（Direct Memory Access）等。不同层次的抽象是相互关联的，我们可以通过 Socket 获取 Channel，反之亦然。
+
+- Selector，是 NIO 实现多路复用的基础，它提供了一种高效的机制，可以检测到注册在 Selector 上的多个 Channel 中，是否有 Channel 处于就绪状态，进而实现了单线程对多 Channel 的高效管理。
+
+- Chartset，提供 Unicode 字符串定义，NIO 也提供了相应的编解码器等，例如，通过下面的方式进行字符串到 ByteBuffer 的转换：
+
+  ```java
+  Charset.defaultCharset().encode("Hello world!"));
+  ```
+
+
+
+##### NIO 能解决什么问题？
+
+设想，我们需要实现一个服务器应用，只简单要求能够同时服务多个客户端请求即可。
+
+使用 java.io 和 java.net 中的同步、阻塞式 API，可以简单实现。
+
+```java
+public class DemoServer extends Thread {
+    private ServerSocket serverSocket;
+    public int getPort() {
+        return  serverSocket.getLocalPort();
+    }
+    public void run() {
+        try {
+            serverSocket = new ServerSocket(0);
+            while (true) {
+                Socket socket = serverSocket.accept();
+                RequestHandler requestHandler = new RequestHandler(socket);
+                requestHandler.start();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (serverSocket != null) {
+                try {
+                    serverSocket.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                ;
+            }
+        }
+    }
+    public static void main(String[] args) throws IOException {
+        DemoServer server = new DemoServer();
+        server.start();
+        try (Socket client = new Socket(InetAddress.getLocalHost(), server.getPort())) {
+            BufferedReader bufferedReader = new BufferedReader(new                   InputStreamReader(client.getInputStream()));
+            bufferedReader.lines().forEach(s -> System.out.println(s));
+        }
+    }
+ }
+// 简化实现，不做读取，直接发送字符串
+class RequestHandler extends Thread {
+    private Socket socket;
+    RequestHandler(Socket socket) {
+        this.socket = socket;
+    }
+    @Override
+    public void run() {
+        try (PrintWriter out = new PrintWriter(socket.getOutputStream());) {
+            out.println("Hello world!");
+            out.flush();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+ }
+
+```
+
+其实现要点是：
+
+- 服务器端启动 ServerSocket，端口 0 表示自动绑定一个空闲端口。
+- 调用 accept 方法，阻塞等待客户端连接。
+- 利用 Socket 模拟了一个简单的客户端，只进行连接、读取、打印。
+- 当连接建立后，启动一个单独线程负责回复客户端请求。
+
+这样，一个简单的 Socket 服务器就被实现出来了。
+
+Java 语言目前的线程实现是比较重量级的，启动或者销毁一个线程是有明显开销的，每个线程都有单独的线程栈等结构，需要占用非常明显的内存，所以，每一个 Client 启动一个线程似乎都有些浪费。
+
+引入线程池机制来避免浪费。
+
+```java
+serverSocket = new ServerSocket(0);
+executor = Executors.newFixedThreadPool(8);
+ while (true) {
+    Socket socket = serverSocket.accept();
+    RequestHandler requestHandler = new RequestHandler(socket);
+    executor.execute(requestHandler);
+}
+```
+
+通过一个固定大小的线程池，来负责管理工作线程，避免频繁创建、销毁线程的开销，这是我们构建并发服务的典型方式。这种工作方式，可以参考下图来理解。
