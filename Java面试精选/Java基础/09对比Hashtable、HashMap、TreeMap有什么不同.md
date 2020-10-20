@@ -14,7 +14,7 @@ TreeMap 则是基于红黑树的一种提供顺序访问的 Map，和 HashMap �
 
 ##### Map的整体结构
 
-![Map类图](https://github.com/hejinalex/notes/blob/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E5%9F%BA%E7%A1%80/Map%E7%B1%BB%E5%9B%BE.png?raw=true)
+![Map类图](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E5%9F%BA%E7%A1%80/Map%E7%B1%BB%E5%9B%BE.png)
 
 Hashtable 比较特别，作为类似 Vector、Stack 的早期集合相关类型，它是扩展了 Dictionary 类的，类结构上与 HashMap 之类明显不同。
 
@@ -107,7 +107,7 @@ HashMap 等其他 Map 实现则是都扩展了 AbstractMap，里面包含了通�
 
 HashMap 内部的结构可以看作是数组（Node[] table）和链表结合组成的复合结构，数组被分为一个个桶（bucket），通过哈希值决定了键值对在这个数组的寻址；哈希值相同的键值对，则以链表形式存储，如果链表大小超过阈值（TREEIFY_THRESHOLD, 8），图中的链表就会被改造为树形结构。
 
-![HashMap内部结构](https://github.com/hejinalex/notes/blob/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E5%9F%BA%E7%A1%80/HashMap%E5%86%85%E9%83%A8%E7%BB%93%E6%9E%84.png?raw=true)
+![HashMap内部结构](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E5%9F%BA%E7%A1%80/HashMap%E5%86%85%E9%83%A8%E7%BB%93%E6%9E%84.png)
 
 从非拷贝构造函数的实现来看，这个表格（数组）似乎并没有在最初就初始化好，仅仅设置了一些初始值而已。
 
