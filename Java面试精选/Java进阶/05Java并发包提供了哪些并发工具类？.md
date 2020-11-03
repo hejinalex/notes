@@ -20,3 +20,32 @@
 
 #### 知识扩展
 
+并发容器：
+
+![](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E8%BF%9B%E9%98%B6/%E5%B9%B6%E5%8F%91%E5%AE%B9%E5%99%A8.png)
+
+如果我们的应用侧重于 Map 放入或者获取的速度，而不在乎顺序，大多推荐使用 ConcurrentHashMap，反之则使用 ConcurrentSkipListMap；如果我们需要对大量数据进行非常频繁地修改，ConcurrentSkipListMap 也可能表现出优势。
+
+CopyOnWriteArraySet 是通过包装了 CopyOnWriteArrayList 来实现的。
+
+CopyOnWrite的原理是，任何修改操作，如 add、set、remove，都会拷贝原数组，修改后替换原来的数组，通过这种防御性的方式，实现另类的线程安全。
+
+```java
+public boolean add(E e) {
+  synchronized (lock) {
+      Object[] elements = getArray();
+      int len = elements.length;
+      // 拷贝
+      Object[] newElements = Arrays.copyOf(elements, len + 1);
+      newElements[len] = e;
+      // 替换
+      setArray(newElements);
+      return true;
+	}
+}
+final void setArray(Object[] a) {
+  array = a;
+}
+```
+
+这种数据结构，相对比较适合读多写少的操作，不然修改的开销还是非常明显的。
