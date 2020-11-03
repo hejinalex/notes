@@ -27,3 +27,180 @@ java.util.concurrent 包提供的容器（Queue、List、Set）、Map，从命�
 
 #### 知识扩展
 
+##### 线程安全队列一览
+
+Java 并发类库提供的各种各样的线程安全队列实现：
+
+![](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E8%BF%9B%E9%98%B6/%E7%BA%BF%E7%A8%8B%E5%AE%89%E5%85%A8%E9%98%9F%E5%88%97.png)
+
+从基本的数据结构的角度分析，有两个特别的Deque实现，ConcurrentLinkedDeque 和 LinkedBlockingDeque。Deque 的侧重点是支持对队列头尾都进行插入和删除，所以提供了特定的方法，如:
+
+- 尾部插入时需要的addLast(e)、offerLast(e)。
+- 尾部删除所需要的removeLast()、pollLast()。
+
+绝大部分 Queue 都是实现了 BlockingQueue 接口。在常规队列操作基础上，Blocking 意味着其提供了特定的等待性操作，获取时（take）等待元素进队，或者插入时（put）等待队列出现空位。
+
+```java
+/**
+ * 获取并移除队列头结点，如果必要，其会等待直到队列出现元素
+…
+ */
+E take() throws InterruptedException;
+
+/**
+ * 插入元素，如果队列已满，则等待直到队列出现空闲空间
+   …
+ */
+void put(E e) throws InterruptedException;  
+```
+
+另一个 BlockingQueue 经常被考察的点，就是是否有界（Bounded、Unbounded），这一点也往往会影响我们在应用开发中的选择。
+
+- ArrayBlockingQueue 是最典型的的有界队列，其内部以 final 的数组保存数据，数组的大小就决定了队列的边界，所以我们在创建 ArrayBlockingQueue 时，都要指定容量，如
+
+  ```java
+  public ArrayBlockingQueue(int capacity, boolean fair)
+  ```
+
+- LinkedBlockingQueue，容易被误解为无边界，但其实其行为和内部代码都是基于有界的逻辑实现的，只不过如果我们没有在创建队列时就指定容量，那么其容量限制就自动被设置为 Integer.MAX_VALUE，成为了无界队列。
+- SynchronousQueue，这是一个非常奇葩的队列实现，每个删除操作都要等待插入操作，反之每个插入操作也都要等待删除动作。那么这个队列的容量是多少呢？是 1 吗？其实不是的，其内部容量是 0。
+- PriorityBlockingQueue 是无边界的优先队列，虽然严格意义上来讲，其大小总归是要受系统资源影响。
+- DelayedQueue 和 LinkedTransferQueue 同样是无边界的队列。对于无边界的队列，有一个自然的结果，就是 put 操作永远也不会发生其他 BlockingQueue 的那种等待情况。
+
+如果我们分析不同队列的底层实现，BlockingQueue 基本都是基于锁实现，一起来看看典型的 LinkedBlockingQueue。
+
+```java
+/** Lock held by take, poll, etc */
+private final ReentrantLock takeLock = new ReentrantLock();
+
+/** Wait queue for waiting takes */
+private final Condition notEmpty = takeLock.newCondition();
+
+/** Lock held by put, offer, etc */
+private final ReentrantLock putLock = new ReentrantLock();
+
+/** Wait queue for waiting puts */
+private final Condition notFull = putLock.newCondition();
+```
+
+
+
+ArrayBlockingQueue的条件变量与LinkedBlockingQueue 版本的实现是有区别的。
+
+notEmpty、notFull 都是同一个再入锁的条件变量，而 LinkedBlockingQueue 则改进了锁操作的粒度，头、尾操作使用不同的锁，所以在通用场景下，它的吞吐量相对要更好一些。
+
+下面的 take 方法与 ArrayBlockingQueue 中的实现，也是有不同的，由于其内部结构是链表，需要自己维护元素数量值，请参考下面的代码。
+
+```java
+public E take() throws InterruptedException {
+    final E x;
+    final int c;
+    final AtomicInteger count = this.count;
+    final ReentrantLock takeLock = this.takeLock;
+    takeLock.lockInterruptibly();
+    try {
+        while (count.get() == 0) {
+            notEmpty.await();
+        }
+        x = dequeue();
+        c = count.getAndDecrement();
+        if (c > 1)
+            notEmpty.signal();
+    } finally {
+        takeLock.unlock();
+    }
+    if (c == capacity)
+        signalNotFull();
+    return x;
+}
+```
+
+类似 ConcurrentLinkedQueue 等，则是基于 CAS 的无锁技术，不需要在每个操作时使用锁，所以扩展性表现要更加优异。
+
+
+
+相对比较另类的 SynchronousQueue，在 Java 6 中，其实现发生了非常大的变化，利用 CAS 替换掉了原本基于锁的逻辑，同步开销比较小。它是 Executors.newCachedThreadPool() 的默认队列。
+
+##### 队列使用场景与典型用例
+
+在实际开发中， Queue 被广泛使用在生产者 - 消费者场景，比如利用 BlockingQueue 来实现，由于其提供的等待机制，我们可以少操心很多协调工作，你可以参考下面样例代码：
+
+```java
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+
+public class ConsumerProducer {
+    public static final String EXIT_MSG  = "Good bye!";
+    public static void main(String[] args) {
+		// 使用较小的队列，以更好地在输出中展示其影响
+        BlockingQueue<String> queue = new ArrayBlockingQueue<>(3);
+        Producer producer = new Producer(queue);
+        Consumer consumer = new Consumer(queue);
+        new Thread(producer).start();
+        new Thread(consumer).start();
+    }
+
+
+    static class Producer implements Runnable {
+        private BlockingQueue<String> queue;
+        public Producer(BlockingQueue<String> q) {
+            this.queue = q;
+        }
+
+        @Override
+        public void run() {
+            for (int i = 0; i < 20; i++) {
+                try{
+                    Thread.sleep(5L);
+                    String msg = "Message" + i;
+                    System.out.println("Produced new item: " + msg);
+                    queue.put(msg);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            try {
+                System.out.println("Time to say good bye!");
+                queue.put(EXIT_MSG);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    static class Consumer implements Runnable{
+        private BlockingQueue<String> queue;
+        public Consumer(BlockingQueue<String> q){
+            this.queue=q;
+        }
+
+        @Override
+        public void run() {
+            try{
+                String msg;
+                while(!EXIT_MSG.equalsIgnoreCase( (msg = queue.take()))){
+                    System.out.println("Consumed item: " + msg);
+                    Thread.sleep(10L);
+                }
+                System.out.println("Got exit message, bye!");
+            }catch(InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+```
+
+上面是一个典型的生产者 - 消费者样例，如果使用非 Blocking 的队列，那么我们就要自己去实现轮询、条件判断（如检查 poll 返回值是否 null）等逻辑，如果没有特别的场景要求，Blocking 实现起来代码更加简单、直观。
+
+
+
+以 LinkedBlockingQueue、ArrayBlockingQueue 和 SynchronousQueue 为例，根据需求可以从很多方面考量：
+
+- 考虑应用场景中对队列边界的要求。ArrayBlockingQueue 是有明确的容量限制的，而 LinkedBlockingQueue 则取决于我们是否在创建时指定，SynchronousQueue 则干脆不能缓存任何元素。
+- 从空间利用角度，数组结构的 ArrayBlockingQueue 要比 LinkedBlockingQueue 紧凑，因为其不需要创建所谓节点，但是其初始分配阶段就需要一段连续的空间，所以初始内存需求更大。
+- 通用场景中，LinkedBlockingQueue 的吞吐量一般优于 ArrayBlockingQueue，因为它实现了更加细粒度的锁操作。
+- ArrayBlockingQueue 实现比较简单，性能更好预测，属于表现稳定的“选手”。
+- 如果我们需要实现的是两个线程之间接力性（handoff）的场景，SynchronousQueue是完美符合这种场景的，而且线程间协调和数据传输统一起来，代码更加规范。
+- 很多时候 SynchronousQueue 的性能表现，往往大大超过其他实现，尤其是在队列元素较小的场景。
