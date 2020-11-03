@@ -80,6 +80,29 @@ public class DeadLockSample extends Thread {
 
 如果必须使用多个锁，尽量设计好锁的获取顺序
 
-- 将对象（方法）和锁之间的关系，用图形化的方式表示分别抽取出来，以今天最初讲的死锁为例，因为是调用了同一个线程所以更加简单。
+- 将对象（方法）和锁之间的关系，用图形化的方式表示分别抽取出来，以上面的死锁为例，因为是调用了同一个线程所以更加简单。
+
+  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E8%BF%9B%E9%98%B6/%E6%AD%BB%E9%94%81%E9%A2%84%E9%98%B201.png)
+
 - 然后根据对象之间组合、调用的关系对比和组合，考虑可能调用时序。
+
+  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E8%BF%9B%E9%98%B6/%E6%AD%BB%E9%94%81%E9%A2%84%E9%98%B202.png)
+
 - 按照可能时序合并，发现可能死锁的场景。
+
+  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Java%E9%9D%A2%E8%AF%95%E7%B2%BE%E9%80%89/Java%E8%BF%9B%E9%98%B6/%E6%AD%BB%E9%94%81%E9%A2%84%E9%98%B203.png)
+
+第三种方法
+
+使用带超时的方法，为程序带来更多可控性。
+
+类似 Object.wait(…) 或者 CountDownLatch.await(…)，都支持所谓的 timed_wait，我们完全可以就不假定该锁一定会获得，指定超时时间，并为无法得到锁时准备退出逻辑。
+
+并发 Lock 实现，如 ReentrantLock 还支持非阻塞式的获取锁操作 tryLock()，这是一个插队行为（barging），并不在乎等待的公平性，如果执行时对象恰好没有被独占，则直接获取锁。有时，我们希望条件允许就尝试插队，不然就按照现有公平性规则等待，一般采用下面的方法：
+
+```java
+if (lock.tryLock() || lock.tryLock(timeout, unit)) {
+    // ...
+}
+```
+
