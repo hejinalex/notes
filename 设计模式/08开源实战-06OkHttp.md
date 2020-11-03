@@ -161,3 +161,40 @@ public Response proceed(Request request, StreamAllocation streamAllocation, Http
 - 创建下一个RealInterceptorChain对象，并将当前RealInterceptorChain中的变量当成参数传入，并将索引index+1传入。
 - 获取当前index位置上的拦截器，第一次创建时传入的index为0，表示获取第一个拦截器，后面会将index+1进入传入，用于获取下一个拦截器。
 - 在Interceptor的intercept中，将下一个RealInterceptorChain传入，内部会调用下一个RealInterceptorChain的proceed方法
+
+![](https://raw.githubusercontent.com/hejinalex/notes/master/%E8%AE%BE%E8%AE%A1%E6%A8%A1%E5%BC%8F/OkHttp%23Interceptor.png)
+
+#### OkHttp中的享元模式
+
+OkHttp中的调度器使用的线程池，线程池是享元模式：
+
+```Java
+public final class Dispatcher {
+  private @Nullable ExecutorService executorService;
+
+  public Dispatcher(ExecutorService executorService) {
+    this.executorService = executorService;
+  }
+
+  public Dispatcher() {
+  }
+
+  public synchronized ExecutorService executorService() {
+    if (executorService == null) {
+      executorService = new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60, TimeUnit.SECONDS,
+          new SynchronousQueue<>(), Util.threadFactory("OkHttp Dispatcher", false));
+    }
+    return executorService;
+  }
+}
+```
+
+这个线程池的特点是：
+
+- 重用之前的线程(线程池中未被销毁的线程)
+- 如果没有可用的线程，则创建一个新线程并添加到池中
+- 池中线程默认为60s未使用就被终止和移除
+- 长期闲置的池将会不消耗任何资源
+- 任务立即执行，线程自动回收
+
+执行execute方法时，首先会先执行SynchronousQueue的offer方法提交任务，并查询线程池中是否有空闲线程来执行SynchronousQueue的poll方法来移除任务。如果有，则配对成功，将任务交给这个空闲线程。否则，配对失败，创建新的线程去处理任务；当线程池中的线程空闲时，会执行SynchronousQueue的poll方法等待执行SynchronousQueue中新提交的任务。若超过60s依然没有任务提交到SynchronousQueue，这个空闲线程就会终止；因为maximumPoolSize是无界的，所以提交任务的速度 > 线程池中线程处理任务的速度就要不断创建新线程；每次提交任务，都会立即有线程去处理，因此适用于处理大量、耗时少的任务。
