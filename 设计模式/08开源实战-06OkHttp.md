@@ -127,8 +127,7 @@ Response getResponseWithInterceptorChain() throws IOException {
     }
     interceptors.add(new CallServerInterceptor(forWebSocket));
     // 创建RealInterceptorChain，传入的index索引为0
-    Interceptor.Chain chain = new RealInterceptorChain(interceptors, null, null, null, 0,
-        originalRequest, this, eventListener, client.connectTimeoutMillis(),
+    Interceptor.Chain chain = new RealInterceptorChain(interceptors, null, null, null, 0,originalRequest, this, eventListener, client.connectTimeoutMillis(),
         client.readTimeoutMillis(), client.writeTimeoutMillis());
 
     return chain.proceed(originalRequest);
@@ -142,13 +141,11 @@ public Response proceed(Request request) throws IOException {
     return proceed(request, transmitter, exchange);
 }
 
-public Response proceed(Request request, StreamAllocation streamAllocation, HttpCodec httpCodec,
-    RealConnection connection) throws IOException {
+public Response proceed(Request request, StreamAllocation streamAllocation, HttpCodec httpCodec,RealConnection connection) throws IOException {
   ......
   // 创建下一个RealInterceptorChain，将index+1（下一个拦截器索引）传入
   RealInterceptorChain next = new RealInterceptorChain(interceptors, streamAllocation, httpCodec,
-      connection, index + 1, request, call, eventListener, connectTimeout, readTimeout,
-      writeTimeout);
+      connection, index + 1, request, call, eventListener, connectTimeout, readTimeout, writeTimeout);
   //获取当前的拦截器
   Interceptor interceptor = interceptors.get(index);
   //通过Interceptor的intercept进行处理
@@ -163,6 +160,58 @@ public Response proceed(Request request, StreamAllocation streamAllocation, Http
 - 在Interceptor的intercept中，将下一个RealInterceptorChain传入，内部会调用下一个RealInterceptorChain的proceed方法
 
 ![](https://raw.githubusercontent.com/hejinalex/notes/master/%E8%AE%BE%E8%AE%A1%E6%A8%A1%E5%BC%8F/OkHttp%23Interceptor.png)
+
+
+
+#### OkHttp中的单例模式
+
+OkHttp是Java的Http请求，常用在Android应用程序开发中。
+
+OkHttp可以根据不同的平台做相应的优化，Platform平台类使用饿汉式的单例实现方式。
+
+```java
+public class Platform {
+  	private static final Platform PLATFORM = findPlatform();
+    
+    public static Platform get() {
+    	return PLATFORM;
+  	}
+    
+    private static Platform findPlatform() {
+        Platform android10 = Android10Platform.buildIfSupported();
+        if (android10 != null) {
+          	return android10;
+        }
+
+        Platform android = AndroidPlatform.buildIfSupported();
+        if (android != null) {
+          	return android;
+        }
+
+        if (isConscryptPreferred()) {
+          Platform conscrypt = ConscryptPlatform.buildIfSupported();
+          	if (conscrypt != null) {
+            	return conscrypt;
+          	}
+        }
+
+        Platform jdk9 = Jdk9Platform.buildIfSupported();
+        if (jdk9 != null) {
+          	return jdk9;
+        }
+
+        Platform jdkWithJettyBoot = Jdk8WithJettyBootPlatform.buildIfSupported();
+        if (jdkWithJettyBoot != null) {
+          	return jdkWithJettyBoot;
+        }
+
+        // Probably an Oracle JDK like OpenJDK.
+        return new Platform();
+  	}
+}
+```
+
+
 
 #### OkHttp中的享元模式
 
