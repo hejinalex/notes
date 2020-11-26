@@ -10,7 +10,7 @@ Language 超⽂本标记语⾔) ⼀起诞⽣，⽤于在⽹络上请求和传输
 
 ![](https://raw.githubusercontent.com/hejinalex/notes/master/Hencoder%20Plus/HTML.png)
 
-#### HTTP 的⼯作⽅式
+#### HTTP 的工作方式
 
 - 浏览器：
 
@@ -23,3 +23,23 @@ Language 超⽂本标记语⾔) ⼀起诞⽣，⽤于在⽹络上请求和传输
   ⽤户点击或界⾯⾃动触发联⽹需求 -> Android 代码调⽤拼装 HTTP 报⽂并发送请求
   到服务器 -> 服务器处理请求后发送响应报⽂给⼿机 -> Android 代码处理响应报⽂并
   作出相应处理（如储存数据、加⼯数据、显示数据到界⾯）
+
+#### URL 和 HTTP 报文
+
+##### URL 格式
+
+三部分：协议类型、服务器地址(和端⼝号)、路径(Path)
+
+协议类型://服务器地址[:端⼝号]路径
+
+http://hencoder.com/users?gender=male
+
+#### 报文格式
+
+- 请求报⽂
+
+  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Hencoder%20Plus/Response.png)
+
+- 响应报文
+
+  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Hencoder%20Plus/Request.png)
