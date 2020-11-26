@@ -38,8 +38,8 @@ http://hencoder.com/users?gender=male
 
 - 请求报⽂
 
-  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Hencoder%20Plus/Response.png)
+  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Hencoder%20Plus/Request.png)
 
 - 响应报文
 
-  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Hencoder%20Plus/Request.png)
+  ![](https://raw.githubusercontent.com/hejinalex/notes/master/Hencoder%20Plus/Response.png)
